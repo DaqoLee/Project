@@ -25,12 +25,19 @@
 #include <Ticker.h>
 
 #include <Adafruit_NeoPixel.h>
-
 #include "Arduino.h"
 #include "esp32-hal.h"
 
 #include <TimeLib.h>
 #include <WiFiUdp.h> 
+
+#include "BluetoothSerial.h"
+
+#if !defined(CONFIG_BT_ENABLED) || !defined(CONFIG_BLUEDROID_ENABLED)
+#error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
+#endif
+
+BluetoothSerial SerialBT;
 
 static const char ntpServerName[] = "time1.aliyun.com";//阿里云的时间服务器
 const int timeZone = 8;     // 时区
@@ -51,6 +58,13 @@ unsigned int localPort = 8888;  // local port to listen for UDP packets
 #define NR_OF_LEDS   30
 #define NR_OF_ALL_BITS 24*NR_OF_LEDS
 
+
+#define BILI  0
+#define TIME  1
+#define GAME  2
+#define TEST  3
+
+
 rmt_data_t led_data[NR_OF_ALL_BITS];
 
 rmt_obj_t* rmt_send_1 = NULL;
@@ -62,19 +76,22 @@ rmt_obj_t* rmt_send_6 = NULL;
 
 // 定时器
 Ticker timer;
+Ticker timer_ms;
 int count = 0;
 boolean flag = true;
 
 // JSON
-DynamicJsonBuffer jsonBuffer(512); // ArduinoJson V5
+DynamicJsonBuffer jsonBuffer(256); // ArduinoJson V5
 
 // WiFi 名称与密码
 const char *ssid = "2506"; //这里填你家中的wifi名  碳酸镁 OnePlus 6
 const char *password = "15814506697";//这里填你家中的wifi密码  cjd84428293  asdfghjkl
 // B 站 API 网址: follower, view, likes
 String NAME = "DaqoLee";  //改成自己的名字
-String UID  = "19577966";  //改成自己的UID 19577966  435162639
+String UID  = "19577966";  //改成自己的UID 19577966  435162639 483818980
+String MyUID = "483818980";
 String followerUrl = "http://api.bilibili.com/x/relation/stat?vmid=" + UID;   // 粉丝数
+String MyFollowerUrl = "http://api.bilibili.com/x/relation/stat?vmid=" + MyUID;   // 粉丝数
 String viewAndLikesUrl = "http://api.bilibili.com/x/space/upstat?mid=" + UID; // 播放数、点赞数
 String weatherUrl = "http://api.seniverse.com/v3/weather/now.json?key=Sq4f2lh5b3lLPTCWr&location=guangzhou&language=zh-Hans&unit=c";   // 时间日期
 
@@ -95,64 +112,76 @@ typedef struct Food
   int y;
 }Food_t;
 
+
+typedef struct 
+{
+  int Hour;
+  int Minute;
+  int Second;
+  uint8_t Flag;
+}Clock_t;
+Clock_t Clock;
 Snake_t SnakeHand;
 Food_t Food;
 
 int FoodBuf[][2]=
 {
-  33*TEMP,4*TEMP,
-  33*TEMP,8*TEMP,
-  33*TEMP,12*TEMP,
-  33*TEMP,16*TEMP,
+  25,17,
+  25,14,
+  25,11,
+  25,8,
+  25,5,
+  25,2,
+
+  23,2,
+  23,5,
+  23,8,
+  23,11,
+  23,14,
+
+  21,14,
+  21,11,
+  21,8,
+  21,5,
+  19,5,
+  17,5,
+  14,5,
+  7,4,
+  7,6,
+  9,6,
+  11,6,
+  14,6,
+  14,8,
+  14,12,
+  13,13,
+  11,14,
+  9,15,
+  7,15,
+  7,11,
+  3,11,
+  4,10,
+  5,9,
+  6,8,
+  7,7
   
-  31*TEMP,16*TEMP,
-  31*TEMP,12*TEMP,
-  31*TEMP,8*TEMP,
-  31*TEMP,4*TEMP,
-  31*TEMP,1*TEMP,
-  
-  29*TEMP,1*TEMP,
-  29*TEMP,4*TEMP,
-  29*TEMP,8*TEMP,
-  29*TEMP,12*TEMP,
-  29*TEMP,16*TEMP,
-  
-  27*TEMP,16*TEMP,
-  27*TEMP,12*TEMP,
-  27*TEMP,8*TEMP,
-  27*TEMP,4*TEMP,
-  27*TEMP,1*TEMP,
-  
-  25*TEMP,1*TEMP,
-  25*TEMP,4*TEMP,
-  25*TEMP,8*TEMP,
-  25*TEMP,12*TEMP,
-  25*TEMP,16*TEMP,
-  
-  23*TEMP,16*TEMP,
-  23*TEMP,12*TEMP,
-  23*TEMP,8*TEMP,
-  23*TEMP,4*TEMP,
-  
-  7*TEMP,3*TEMP,
-  14*TEMP,11*TEMP,
-  13*TEMP,12*TEMP,
-               
-  7*TEMP,5*TEMP,
 };
 
-unsigned char GameMap[240][240]={0};
+unsigned char GameMap[40][20]={0};
 
 long follower = 0;   // 粉丝数
 long view = 0;       // 播放数
 long likes = 0;      // 获赞数
 int weatherCode=0;
 int temperature=0;
+uint8_t BtBuff[10]={0};
+Adafruit_NeoPixel strip(10, 16, NEO_GRB + NEO_KHZ800);
 
 void setup()
 {
 
   Serial.begin(115200);
+  SerialBT.begin("ESP32"); //Bluetooth device name
+  
 #if defined(__AVR_ATtiny85__) && (F_CPU == 16000000)
   clock_prescale_set(clock_div_1);
 #endif
@@ -186,18 +215,23 @@ void setup()
   #endif
   setSyncProvider(getNtpTime);
   setSyncInterval(300);
-  timer.attach(30, timerCallback); // 每隔1min
-  GAME_SnakeInit(&SnakeHand,GameMap);
+  timer.attach(1, timerCallback); // 每隔1min
+  timer_ms.attach_ms(10, timer_msCallback);
+  
+  //GAME_SnakeInit(&SnakeHand,GameMap);
 
   // 第一次调用获取数据函数，方便开机即可显示
   getFollower(followerUrl);
   getWeather(weatherUrl);
+  getClock();
   //墨水屏初始化
   DEV_Module_Init();
   EPD_2IN13_V2_Init(EPD_2IN13_V2_FULL);
   EPD_2IN13_V2_Clear();
   DEV_Delay_ms(500);
 }
+
+int GameDelayFlag=0;
 
 void loop()
 {
@@ -217,55 +251,30 @@ void loop()
   Paint_SelectImage(BlackImage);
   Paint_SetMirroring(MIRROR_HORIZONTAL); //
   Paint_Clear(WHITE);
-#if   0
-  Paint_SelectImage(BlackImage);
-  Paint_Clear(WHITE);
-  Paint_DrawBitMap(gImage_66); //gImage_66  
+#if   1
+  Paint_DrawBitMap(gImage_2233); //gImage_66  
   EPD_2IN13_V2_Display(BlackImage);
 #endif
-//  DEV_Delay_ms(1000);
+  GlowTubeTest(weaTemp);
+  Paint_Clear(WHITE);
   EPD_2IN13_V2_Init(EPD_2IN13_V2_FULL);
   EPD_2IN13_V2_DisplayPartBaseImage(BlackImage);
   EPD_2IN13_V2_Init(EPD_2IN13_V2_PART);
-  Paint_SelectImage(BlackImage);
-  Paint_Clear(WHITE);
-  GlowTubeTest(weaTemp);
+//  Paint_SelectImage(BlackImage);
+//  Paint_Clear(WHITE);
+//  GlowTubeTest(weaTemp);
+//GAME_SnakeInitTest(&SnakeHand,GameMap);
+  Clock.Flag=1;
   while (1)
   {
-     while(0)//(flag)
-     {  
-        if (count == 0)
-        {
-          // display data
-          flag = false;
-        } else if (count == 1) {
-          // get follower
-          Serial.println("count = 1, get follower");
-          getFollower(followerUrl);
-          flag = false;
-        } else if (count == 2) {
-          // get view and likes
-          Serial.println("count = 2, get view and likes");
-          getWeather(weatherUrl);
-          //getViewAndLikes(dateTimeUrl);
-          flag = false;
-        }
-        now();
-        ClockDisplay();
-       // FollowerDisplay(follower);
-    }
-    
-//    WeatherDisplay(weatherCode, temperature);// weaTemp
-//    WeatherDisplay(weaTemp, temperature);// weaTemp
-//    weaTemp=weaTemp>30?1:weaTemp+1;
-
-//    GlowTubeTest(weaTemp);
-//    Paint_DrawBitMap_1(0,40,40,120,gImage_bili);  
-//    Paint_ClearWindows(10, 220, 10 + Font20.Width * 7, 220 + Font20.Height, WHITE);
-//    Paint_DrawNum(10, 220, follower, &Font20, BLACK, WHITE);
-    GAME_SnakeTest();
+    StatusLoop(BtBuff);
+//GAME_SnakeTest();
     EPD_2IN13_V2_DisplayPart(BlackImage);
-    delay(100);
+    if(GameDelayFlag)
+    {
+       delay(200);
+    }
+   
  }
 //  EPD_2IN13_V2_Init(EPD_2IN13_V2_FULL);
 //  EPD_2IN13_V2_Clear();
@@ -280,12 +289,320 @@ void loop()
 void timerCallback()
 {
   count++;
-  if (count == 3)
+  if (count == 5)
   {
+    flag = true; 
     count = 0;
   }
-  flag = true;
+  Clock.Second++;
+  if(Clock.Second>=60)
+  {  
+    
+    Clock.Second=0;
+    Clock.Minute++;
+    if( Clock.Minute>=60)
+    {
+      Clock.Minute=0;
+      Clock.Hour++;
+      Clock.Flag=1;
+      if(Clock.Hour>=24)
+      {
+          Clock.Hour=0;
+      }
+    }  
+  }
+}
+
+void timer_msCallback()
+{
+  static int timer_ms_temp=0,timer_ms_num=0;
+  
+  if(SerialBT.available())
+  {
+    if(timer_ms_temp == 0)
+    {
+      timer_ms_num=SerialBT.available();
+      //Serial.println(timer_ms_num);
+    }
+    BtBuff[timer_ms_temp++]=SerialBT.read();
+  
+  } 
+  else
+  {
+    timer_ms_temp=0;  
+  }
+}
+
+
+
+void StatusLoop(uint8_t * ModeBuf)
+{
+  long clockData=1000000+Clock.Hour*10000+Clock.Minute*100+Clock.Second;
+  static uint8_t N=0,biliFlag=1,timeFlag=0,gameFlag=0,gameDir=4,gameTemp,testFlag=0;
+
+  if(ModeBuf[0]==0x5A&&ModeBuf[2]==0x5A)
+  {
+    N=ModeBuf[1];
+  }
+  else if(ModeBuf[0]==0x55&&ModeBuf[2]==0x55)
+  {
+    gameDir=ModeBuf[1];
+  }
+  else if(ModeBuf[0]==0x3A&&ModeBuf[2]==0x3A)
+  {
+    gameTemp=ModeBuf[1];
+  } 
+  
+  switch(N)
+  {
+    case BILI:
+      if(biliFlag)
+      {
+        biliFlag=0;
+        timeFlag=1;
+        gameFlag=1;
+        testFlag=1;
+        if(GameDelayFlag)
+        {
+          GAME_SnakeFreeNode(&SnakeHand);
+        }
+        GameDelayFlag=0;
+        Paint_Clear(WHITE);
+        getFollower(MyFollowerUrl);
+        getWeather(weatherUrl);
+        WeatherDisplay(weatherCode, temperature);// weaTemp 
+        DateDisplay();
+        Paint_DrawBitMap_1(0,40,40,120,gImage_bili); 
+        Paint_DrawString_CN(0, 220,"萤 火 实 验 室" , &Font12CN, BLACK, WHITE);
+      }
+     if(flag)
+     {  
+        flag = false;
+        getFollower(MyFollowerUrl);       
+        if(Clock.Flag)
+        {
+          getClock();
+          getWeather(weatherUrl);
+          WeatherDisplay(weatherCode, temperature);// weaTemp
+          DateDisplay();
+          Clock.Flag=0;
+        }      
+     }
+    ClockDisplay();    
+    GlowTubeDisplay(follower,ModeBuf);
+    break;
+    
+    case TIME: 
+      if(timeFlag)
+      {
+        biliFlag=1;
+        timeFlag=0;
+        gameFlag=1;
+        testFlag=1;
+         if(GameDelayFlag)
+        {
+          GAME_SnakeFreeNode(&SnakeHand);
+        }
+        GameDelayFlag=0;
+        Paint_Clear(WHITE);
+        getFollower(MyFollowerUrl);
+        getWeather(weatherUrl);
+        WeatherDisplay(weatherCode, temperature);// weaTemp
+        DateDisplay();
+        FollowerDisplay();
+        Paint_DrawBitMap_1(0,40,40,120,gImage_bili);  
+        Paint_DrawString_CN(0, 220,"萤 火 实 验 室" , &Font12CN, BLACK, WHITE);
+      }
+     if(flag)
+     {  
+        flag = false;
+        getFollower(MyFollowerUrl);
+        FollowerDisplay();
+        if(Clock.Flag)
+        {
+          getClock();
+          getWeather(weatherUrl);
+          WeatherDisplay(weatherCode, temperature);// weaTemp
+          DateDisplay();
+          Clock.Flag=0;
+        }      
+     } 
+     GlowTubeDisplay(clockData,ModeBuf);    
+    break;    
+    
+    case TEST:
+     if(testFlag)
+     {
+       biliFlag=1;
+       timeFlag=1;
+       gameFlag=1;
+       testFlag=0;
+       if(GameDelayFlag)
+       {
+         GAME_SnakeFreeNode(&SnakeHand);
+       }
+       GameDelayFlag=0;
+       Paint_Clear(WHITE);
+     }
+     GlowTubeTest(0);
    
+    break;
+    case GAME:
+      if(gameFlag)
+      {
+        biliFlag=1;
+        timeFlag=1;
+        gameFlag=0;
+        testFlag=1;
+        GameDelayFlag=1;
+        Paint_Clear(WHITE);
+        GAME_SnakeInit(&SnakeHand,GameMap);
+        Paint_DrawBitMap_1(0,40,40,120,gImage_bili);  
+        Paint_ClearWindows(0, 220, 0 + Font12CN.Width * 7, 220 + Font12CN.Height, WHITE);
+        Paint_DrawString_CN(0, 220,"萤 火 实 验 室" , &Font12CN, BLACK, WHITE);
+      }
+    //   GAME_SnakeTest();
+    
+      if(!GAME_SnakeMove(GameMap,&SnakeHand,gameDir))
+      {
+        N=15;
+      }
+      
+    break;
+
+    case 4:
+      if(testFlag)
+      {
+        biliFlag=1;
+        timeFlag=1;
+        gameFlag=1;
+        testFlag=0;
+        if(GameDelayFlag)
+       {
+         GAME_SnakeFreeNode(&SnakeHand);
+       }
+       GameDelayFlag=0;
+        Paint_Clear(WHITE);
+        GAME_SnakeInitTest(&SnakeHand,GameMap);
+        Paint_DrawBitMap_1(0,40,40,120,gImage_bili);  
+        Paint_ClearWindows(0, 220, 0 + Font12CN.Width * 7, 220 + Font12CN.Height, WHITE);
+        Paint_DrawString_CN(0, 220,"萤 火 实 验 室" , &Font12CN, BLACK, WHITE);
+      }
+       GAME_SnakeTest();
+      
+     break;
+
+    case 5:
+      if(testFlag)
+      {
+        biliFlag=1;
+        timeFlag=1;
+        gameFlag=1;
+        testFlag=0;
+        if(GameDelayFlag)
+        {
+          GAME_SnakeFreeNode(&SnakeHand);
+        }
+        GameDelayFlag=0;
+        Paint_Clear(WHITE);
+        getFollower(followerUrl);
+        getWeather(weatherUrl);
+        WeatherDisplay(weatherCode, temperature);// weaTemp
+        Paint_DrawBitMap_1(0,40,40,120,gImage_bili);  
+        DateDisplay();
+        Paint_DrawString_CN(0, 220,"萤 火 实 验 室" , &Font12CN, BLACK, WHITE);
+      }
+     if(flag) 
+     {  
+        flag = false;
+        getFollower(followerUrl);
+        if(Clock.Flag)
+        {
+          getClock();
+          Clock.Flag=0;
+        }      
+     }
+    ClockDisplay();    
+    GlowTubeDisplay(follower,ModeBuf);
+    break;
+    
+     case 8: 
+        if(gameFlag)
+        {
+          biliFlag=1;
+          timeFlag=1;
+          gameFlag=0;
+          testFlag=1;
+          if(GameDelayFlag)
+          {
+            GAME_SnakeFreeNode(&SnakeHand);
+          }
+        }
+        Paint_Clear(WHITE);
+        delay(1000);
+        Paint_DrawBitMap(gImage_66); //gImage_66  
+//        EPD_2IN13_V2_Display(BlackImage);
+       break;
+     case 9: 
+          if(timeFlag)
+          {
+            biliFlag=1;
+            timeFlag=0;
+            gameFlag=1;
+            testFlag=1;
+             if(GameDelayFlag)
+            {
+              GAME_SnakeFreeNode(&SnakeHand);
+            }
+            GameDelayFlag=0;
+            Paint_Clear(WHITE);
+            FollowerDisplay();
+            WeatherDisplay(weatherCode, temperature);// weaTemp
+            Paint_DrawBitMap_1(0,40,40,120,gImage_bili);  
+            DateDisplay();
+            Paint_ClearWindows(0, 220, 0 + Font12CN.Width * 7, 220 + Font12CN.Height, WHITE);
+            Paint_DrawString_CN(0, 220,"萤 火 实 验 室" , &Font12CN, BLACK, WHITE);
+          }
+         if(flag)
+         {  
+            flag = false;
+            getFollower(followerUrl);
+            getWeather(weatherUrl);
+            FollowerDisplay();
+            if(Clock.Flag)
+            {
+              getClock();
+              WeatherDisplay(weatherCode, temperature);// weaTemp
+              DateDisplay();
+              Paint_DrawBitMap_1(0,40,40,120,gImage_bili);  
+              Paint_ClearWindows(0, 220, 0 + Font12CN.Width * 7, 220 + Font12CN.Height, WHITE);
+              Paint_DrawString_CN(0, 220,"萤 火 实 验 室" , &Font12CN, BLACK, WHITE);
+              Clock.Flag=0;
+            }      
+         } 
+    
+         WeatherTest();
+        // GlowTubeDisplay(clockData,ModeBuf);    
+        break;    
+    
+    default:
+       if(timeFlag)
+      {
+        biliFlag=1;
+        timeFlag=0;
+        gameFlag=1;
+        testFlag=1;
+     if(GameDelayFlag)
+     {
+       GAME_SnakeFreeNode(&SnakeHand);
+       gameFlag=1;
+     }
+     }
+     GameDelayFlag=1;
+     N=GAME_Over(0);
+    break;
+  }  
+  
 }
 
 
@@ -318,6 +635,15 @@ void getWeather(String url)
   }
 
   http.end();
+}
+
+void getClock(void)
+{
+  now();
+
+  Clock.Hour=hour();
+  Clock.Minute=minute();
+  Clock.Second=second();
 }
 
 void getFollowerTest(String url)
@@ -399,6 +725,136 @@ void getFollower(String url)
 
   http.end();
 }
+
+void GlowTubeDisplay(int Data , uint8_t * ModeBuf)
+{
+    char dataBuf[7];
+    
+    static uint8_t red[7]  ={255,255,255,255,0  ,0  ,0  }; 
+    static uint8_t blue[7] ={0  ,0  ,255,0  ,255,255,0  };
+    static uint8_t green[7]={0  ,0  ,0  ,255,0  ,255,255};
+    static uint8_t color=0,tempFlag=0,j=0;
+    static uint8_t Brightness=4,Mode=1;
+    static float temp=1.0f;
+    if(ModeBuf[0]==0xFF&&ModeBuf[2]==0xFF)
+    {
+      Brightness=ModeBuf[1];
+    }
+    else if(ModeBuf[0]==0xAA&&ModeBuf[6]==0xAA)
+    {
+      Mode=ModeBuf[1];
+      if(Mode == 1||Mode == 2)
+      {
+        red[ModeBuf[2]]=ModeBuf[3];
+        blue[ModeBuf[2]]=ModeBuf[4];
+        green[ModeBuf[2]]=ModeBuf[5];        
+      }
+
+   //    Serial.printf("red[%d]=%d\n", ModeBuf[2],red[ModeBuf[2]]);
+      
+    }
+    sprintf(dataBuf, "%07d",Data);
+
+    switch(Brightness)//5-255
+    {
+      case 1: 
+      temp=temp>=20?20:temp+0.2;
+      //delay(10);  
+     //  Serial.println(temp);
+      break;
+      case 2: 
+      temp=temp<=1?1:temp-0.2;
+     // delay(1);
+      //  Serial.println(temp);
+      break;
+      case 3: 
+      if(tempFlag==0)
+      {
+         temp=temp>=20?20:temp+0.2;
+
+         if(temp>=20)
+         {
+           tempFlag=1;
+         }
+      }
+      else
+      {
+         temp=temp<=1?1:temp-0.2;
+         if(temp<=1)
+         {
+           tempFlag=0;
+         }
+      }
+    // delay(10);   
+      break;
+      case 4: 
+      
+      break;
+      default:
+      break;
+    }
+
+    switch(Mode)
+    {
+      case 1: //整体显示同一个颜色
+      for(int i=1;i<=6;i++)
+      {
+         colWrite(i,  dataBuf[i]-'0',red[0]/temp ,green[0]/temp ,blue[0]/temp);
+         delay(2);
+      }
+      break;
+      
+      case 2: //不同管子不同颜色
+      for(int i=1;i<=6;i++)
+      {
+         colWrite(i,  dataBuf[i]-'0',red[i]/temp ,green[i]/temp ,blue[i]/temp);
+         delay(2);
+      }
+      break;
+      
+      case 3:// 整体光谱循环
+      rainbow(Data,1);
+      break;
+      case 4://全灭 
+      for(int i=1;i<=6;i++)
+      {
+         colWrite(i,  dataBuf[i]-'0',0 ,0 ,0);
+         delay(2);
+      }
+      break;
+      default:
+      break;
+    }
+
+}
+
+void rainbow(int Data ,int wait) 
+{
+  static uint32_t color=0xFF0000;
+  char dataBuf[7];
+  static long firstPixelHue = 0;
+  sprintf(dataBuf, "%d",Data);  
+  if(firstPixelHue < 65536)
+//  for(long firstPixelHue = 0; firstPixelHue < 65536; firstPixelHue += 256) 
+  {
+   int pixelHue = firstPixelHue + ( 65536L );
+   color=strip.gamma32(strip.ColorHSV(pixelHue));
+   firstPixelHue += 256;
+    
+   for(int i=1;i<=6;i++)
+   { 
+      colWrite(i,  dataBuf[i]-'0',(color&0xFF0000)>>16 ,(color&0xFF00)>>8 ,color&0xFF);
+      delay(1);
+   }
+    delay(wait);  // Pause for a moment
+  }
+  else
+  {
+    firstPixelHue = 0;
+  }
+}
+
+
 
 void GlowTubeTest(int testNum)
 {
@@ -656,43 +1112,18 @@ void GlowTubeTest(int testNum)
 }
 
 
-void FollowerDisplay(int temp)
+void FollowerDisplay(void)
 {
-    char followerBuf[7];
-    sprintf(followerBuf, "%d",temp);
-
-//    colWrite(1,  followerBuf[1]-'0',255 ,0 ,0);
-//    delay(10);
-//    colWrite(2,  followerBuf[2]-'0',255 ,0 ,0);
-//     delay(10);
-//    colWrite(3,  followerBuf[3]-'0',255 ,0 ,0);
-//     delay(10);
-//    
-//    colWrite(4,  followerBuf[4]-'0',255 ,0 ,0);
-//     delay(10);
-//    colWrite(5,  followerBuf[5]-'0',255 ,0 ,0);
-//     delay(10);
-//    colWrite(6,  followerBuf[6]-'0',255 ,0 ,0);
-//     delay(10);
-
-    colWrite(1,  followerBuf[1]-'0',255 ,0 ,0);
-    delay(10);
-    colWrite(2,  followerBuf[2]-'0',255 ,255 ,0);
-    delay(10);
-    colWrite(3,  followerBuf[3]-'0',0 ,255 ,0);
-    delay(10);
-    colWrite(4,  followerBuf[4]-'0',0 ,255 ,255);
-     delay(10);
-    colWrite(5,  followerBuf[5]-'0',0 ,0 ,255);
-     delay(10);
-    colWrite(6,  followerBuf[6]-'0',255 ,0 ,255);
-     delay(10);
+    static char flowBuf[7];
+    sprintf(flowBuf, "%07d",follower );
+    Paint_ClearWindows(5, 140, 5 + Font16_d.Width * 7, 140 + Font16_d.Height, WHITE);
+    Paint_DrawString_EN(5, 140, flowBuf, &Font16_d, BLACK, WHITE);
 }
 
 void WeatherDisplay(int weaCode, int temp)
 {
-    Paint_ClearWindows(0, 52, 0 + Font24.Width * 2, 52 + Font24.Height, WHITE);
-    Paint_DrawNum(0, 52, temp, &Font24, BLACK, WHITE);
+    Paint_ClearWindows(3, 52, 3 + Font20.Width * 2, 52 + Font20.Height, WHITE);
+    Paint_DrawNum(3, 52, temp, &Font20, BLACK, WHITE);
    switch(weaCode)
   {
     case 1:
@@ -733,37 +1164,56 @@ void WeatherDisplay(int weaCode, int temp)
   }    
 }
 
+void WeatherTest(void)
+{
+  static int arr[6]={1,4,9,10,21,30};
+  static int i=0,mo=8,da=1,we=6;
+  char dateBuf[5];
+
+  delay(500);
+if(i<6)
+{
+  WeatherDisplay(arr[i], temperature);// weaTemp
+}
+if(i>7)
+{
+  da=da>30?1:da+1;
+  we=we>5?0:we+1;
+  if(da==1)
+  {
+    mo++;
+  } 
+  sprintf(dateBuf, "%02d%02d", mo, da);
+  Paint_ClearWindows(0, 110, 0 + Font20.Width * 4, 110 + Font20.Height, WHITE);
+  Paint_DrawString_EN(0, 110, dateBuf, &Font20, BLACK, WHITE);
+  Paint_ClearWindows(80, 85, 80 + Font24CN.Width, 85 + Font24CN.Height, WHITE);
+  Paint_DrawString_CN(80, 85,num_week(we+1,4), &Font24CN, BLACK, WHITE);
+  
+}
+ 
+  i=i>12?0:i+1;
+}
 
 void ClockDisplay()
 {
   char timeBuf[10];
+    
+  sprintf(timeBuf, "%02d %02d", Clock.Hour, Clock.Minute);
+  Paint_ClearWindows(1, 135, 1 + Font24.Width * 5+2, 135 + Font24.Height, WHITE);
+  Paint_DrawString_EN(1, 135, timeBuf, &Font24, BLACK, WHITE);
+  sprintf(timeBuf, "%02d", Clock.Second);
+  Paint_DrawString_EN(53, 150, timeBuf, &Font12, BLACK, WHITE);
+}
+
+void DateDisplay(void)
+{
   char dateBuf[5];
-  
-  Paint_ClearWindows(0, 90, 0 + Font20.Width * 8+2, 90 + Font20.Height, WHITE);
+  Paint_ClearWindows(0, 90, 0 + Font20.Width*4, 90 + Font20.Height, WHITE);
   Paint_DrawNum(0, 90,year(), &Font20, BLACK, WHITE);
   sprintf(dateBuf, "%02d%02d", month(), day());
-  Paint_ClearWindows(0, 110, 0 + Font20.Width * 8+2, 110 + Font20.Height, WHITE);
+  Paint_ClearWindows(0, 110, 0 + Font20.Width*4, 110 + Font20.Height, WHITE);
   Paint_DrawString_EN(0, 110, dateBuf, &Font20, BLACK, WHITE);
-
-#if  0
-  colWrite(1, hour()/10 ,255 ,0 ,0);
-  delay(10);
-  colWrite(2,  hour()%10,255 ,255 ,0);
-  delay(10);
-  colWrite(3, minute()/10,255 ,0 ,255);
-  delay(10);
-  colWrite(4,  minute()%10,0 ,255 ,0);
-  delay(10);
-  colWrite(5, second()/10,0 ,0 ,255);
-  delay(10);
-  colWrite(6,  second()%10,0 ,255 ,255);
-  delay(10);
-#endif 
-
-  sprintf(timeBuf, "%02d:%02d:%02d", hour(), minute(), second());
-  Paint_ClearWindows(5, 140, 0 + Font20.Width * 8+2, 140 + Font20.Height, WHITE);
-  Paint_DrawString_EN(5, 140, timeBuf, &Font20, BLACK, WHITE);
-  Paint_ClearWindows(80, 85, 80 + Font20.Width * 8+2, 85 + Font20.Height, WHITE);
+  Paint_ClearWindows(80, 85, 80 + Font24CN.Width, 85 + Font24CN.Height, WHITE);
   Paint_DrawString_CN(80, 85,num_week(weekday(),4), &Font24CN, BLACK, WHITE);
 }
 
@@ -973,111 +1423,125 @@ void colWrite(int Num,int Data,int R,int G,int B)
 
 void GAME_SnakeTest(void)
 {
-  static int j=0,N=4;
+  static int j=0,N=3;
    delay(10);
-   if(j<156)
+   if(j<101)
    {
-    GAME_SnakeMove(GameMap,&SnakeHand,N);  
+    GAME_SnakeMoveTest(GameMap,&SnakeHand,N);  
    } 
+   else
+   {
+    
+     Paint_DrawString_CN(21, 120,"关注＋三连" , &Font12CN,BLACK , WHITE);
+   }
    j++;
-   if(j==16)
-    N=1;
-   if(j==18)
+   if(j==6)
     N=2;
-   if(j==33)
+   else if(j==21)
     N=1;
-   if(j==35)
+   else if(j==23)
     N=4;
-   if(j==50)
+   else if(j==35)
     N=1;
-   if(j==52)
+   else if(j==37)
     N=2;
-   if(j==67)
+   else if(j==46)
     N=1;
-   if(j==69)
+   else if(j==53)
+    N=2;
+   else if(j==54)
+    N=1;
+   else if(j==61)
     N=4;
-   if(j==84)
-    N=1;
-   if(j==86)
-    N=2;
-   if(j==98)
-    N=1;
-   if(j==107)
-    N=2;
-   if(j==108)
-    N=1;
-   if(j==115)
-    N=4;
-   if(j==117)
+   else if(j==63)
     N=3;
-   if(j==124)
+   else if(j==70)
     N=4;
-   if(j==130)
+   else if(j==76)
     N=1;
-   if(j==131)
+   else if(j==77)
     N=4;
-   if(j==132)
+   else if(j==78)
     N=1;
-   if(j==134)
+   else if(j==80)
+    N=4;  
+   else if(j==81)
+    N=1; 
+   else if(j==83)
     N=4;
-   if(j==135)
+   else if(j==84)
     N=1;
-   if(j==137)
-    N=4;
-   if(j==138)
-    N=1;
-   if(j==140)
+   else if(j==86)
     N=2;
-   if(j==144)
+   else if(j==90)
     N=1;
-   if(j==148)
+   else if(j==94)
     N=2;
-   if(j==149)
+   else if(j==95)
     N=3;
-   if(j==150)  
-    N=2; 
-   if(j==151)  
-    N=3;   
-   if(j==152)
+   else if(j==96)
     N=2;
-   if(j==153)
+   else if(j==97)
     N=3;
-   if(j==154)
+   else if(j==98)
     N=2;
-   if(j==155)
-    N=3;  
+   else if(j==99)
+    N=3;
+   else if(j==100)
+    N=2;
+   else if(j==101)
+    N=3;
 }
  
 
-void GAME_SnakeFillInGameMap(unsigned char (*gamemap)[240],Snake_t *snake)
+void GAME_SnakeFillInGameMap(unsigned char (*gamemap)[20],Snake_t *snake)
 {
   Snake_t *p=snake; 
-  while(p->next!=NULL){
-    gamemap[p->y][p->x]=1;
+  while(p->next!=NULL)
+  {
+    gamemap[p->x][p->y]=1;
     p=p->next;
   }
 }
 
-void GAME_SnakePixel(int x,int y)
+void GAME_SnakePixel(int x,int y,UWORD col)
 {
-  Paint_DrawPoint(y, x, BLACK, DOT_PIXEL_4X4, DOT_STYLE_DFT);
+  for(int i=0;i<6;i++)
+  {
+    for(int j=0;j<6;j++)
+    {
+      Paint_DrawPoint(6*y+j, 6*x+i, col, DOT_PIXEL_1X1, DOT_STYLE_DFT);
+    }
+  }
 }
 
 
 
-void GAME_NewFood(unsigned char (*gamemap)[240],Food_t *food,int x1,int y1)
+void GAME_NewFood(unsigned char (*gamemap)[20],Food_t *food)
 {
   while(1)
   {    
-//    food->x+=14;//random(240); 
-//    food->y = 7;//random(10); 
-    food->x=x1;
-    food->y=y1;
-    if(gamemap[food->x][food->y]==0)
+    food->x = random(24); 
+    food->y = random(18); 
+    if(gamemap[food->x][food->y]==0&&food->x>6&&food->y>6)
     {
       gamemap[food->x][food->y]=2;
-      GAME_SnakePixel(food->x,food->y);
+      GAME_SnakePixel(food->x,food->y,BLACK);
       break;
+    }
+  }
+}
+void GAME_NewFoodTest(unsigned char (*gamemap)[20],Food_t *food,int x1,int y1)
+{
+//  while(1)
+  {    
+    food->x=x1;
+    food->y=y1;
+   // if(gamemap[food->x][food->y]==0)
+    {
+      gamemap[food->x][food->y]=2;
+      GAME_SnakePixel(food->x,food->y,BLACK);
+ //     break;
     }
   }
 }
@@ -1091,7 +1555,7 @@ void GAME_SnakeAddNode(Snake_t *snake,int x,int y)
   
   if(node==NULL)
   {
-  
+     
   }
   node->x=x;
   node->y=y;
@@ -1110,34 +1574,56 @@ void GAME_SnakeAddNode(Snake_t *snake,int x,int y)
 
 void GAME_NewSnake(Snake_t *snake)
 {
-  int x=231,y=0;
+  int x=5,y=5;
   
   snake->x=x;
   snake->y=y;
   snake->prev=NULL;
   snake->next=NULL;
   
-  for(int i=0;i<19;i++)
+  for(int i=0;i<5;i++)
   {
-    GAME_SnakeAddNode(snake,x+i*TEMP,y);
+    GAME_SnakeAddNode(snake,x+i,y);
   }
-  GAME_NewFood(GameMap,&Food,FoodBuf[0][0],FoodBuf[0][1]);
+  GAME_NewFood(GameMap,&Food);
   
   GAME_SnakeFillInGameMap(GameMap ,snake);
 }
 
-void GAME_SnakeRun(Snake_t *snake)
+
+void GAME_NewSnakeTest(Snake_t *snake)
 {
-  Snake_t *h=snake,*n=snake->prev;
-  Paint_DrawPoint(n->y,n->x, WHITE, DOT_PIXEL_4X4, DOT_STYLE_DFT);
-  GAME_SnakePixel(h->x,h->y);
+  int x=19,y=17;
+  
+  snake->x=x;
+  snake->y=y;
+  snake->prev=NULL;
+  snake->next=NULL;
+  
+  for(int i=0;i<15;i++)
+  {
+    GAME_SnakeAddNode(snake,x-i,y);
+  }
+  GAME_NewFoodTest(GameMap,&Food,FoodBuf[0][0],FoodBuf[0][1]);
+  
+  GAME_SnakeFillInGameMap(GameMap ,snake);
 }
 
-unsigned char GAME_SnakeMove(unsigned char (*gamemap)[240],Snake_t *snake,int dir) 
+void GAME_SnakeRun(unsigned char (*gamemap)[20],Snake_t *snake)
+{
+  Snake_t *h=snake,*n=snake->prev;
+ // Paint_DrawPoint(n->y,n->x, WHITE, DOT_PIXEL_4X4, DOT_STYLE_DFT);
+  GAME_SnakePixel(n->x,n->y,WHITE);
+  GAME_SnakePixel(h->x,h->y,BLACK);
+  gamemap[n->x][n->y]=0;
+}
+
+unsigned char GAME_SnakeMove(unsigned char (*gamemap)[20],Snake_t *snake,int dir) 
 {
   Snake_t *p,*h;
   unsigned char val;
   static int temp=1;
+  
   h=snake;
   p=snake->prev;
   while(p!=snake)
@@ -1146,22 +1632,22 @@ unsigned char GAME_SnakeMove(unsigned char (*gamemap)[240],Snake_t *snake,int di
     p->y=p->prev->y;
     p=p->prev;
   }
-  switch(dir)//ESP8266_RxBuf[0])
+  switch(dir)
   {
     case 1:
-      h->x-=7;     
+      h->x--;     
     break;
     case 2:
-      h->y-=7;
+      h->y--;
     break;
     case 3:
-      h->x+=7;
+      h->x++;
     break;
     case 4:
-      h->y+=7;
+      h->y++;
     break;
     default:
-      h->y+=7;
+      h->y++;
       break;
   
   }
@@ -1170,39 +1656,198 @@ unsigned char GAME_SnakeMove(unsigned char (*gamemap)[240],Snake_t *snake,int di
 
   switch(val)
   {
-      case 0:       
+    case 0:       
       break;
     case 1:
+
+         return 0;
       break;
     case 2:
         GAME_SnakeAddNode(snake,h->x,h->y);
-         GAME_NewFood(gamemap,&Food,FoodBuf[temp][0],FoodBuf[temp][1]);
-        temp++;    
+        GAME_NewFood(gamemap,&Food);   
       break;
     default:
       break;
   }
-  GAME_SnakeRun(snake);
+  GAME_SnakeRun(gamemap,snake);
   GAME_SnakeFillInGameMap(gamemap,snake);
-  return 0;
+  return 1;
 }
 
+
+unsigned char GAME_SnakeMoveTest(unsigned char (*gamemap)[20],Snake_t *snake,int dir) 
+{
+  Snake_t *p,*h;
+  unsigned char val;
+  static int temp=1;
+  
+  h=snake;
+  p=snake->prev;
+  while(p!=snake)
+  {
+    p->x=p->prev->x;
+    p->y=p->prev->y;
+    p=p->prev;
+  }
+  switch(dir)
+  {
+    case 1:
+      h->x--;     
+    break;
+    case 2:
+      h->y--;
+    break;
+    case 3:
+      h->x++;
+    break;
+    case 4:
+      h->y++;
+    break;
+    default:
+      h->y++;
+      break;
+  
+  }
+  
+  val=gamemap[h->x][h->y];
+
+  switch(val)
+  {
+    case 0:       
+      break;
+    case 1:
+
+        // return 0;
+      break;
+    case 2:
+        GAME_SnakeAddNode(snake,h->x,h->y);
+        GAME_NewFoodTest(gamemap,&Food,FoodBuf[temp][0],FoodBuf[temp][1]); 
+        temp++;
+      break;
+    default:
+      break;
+  }
+  Serial.printf("%d\r\n",temp);
+  GAME_SnakeRun(gamemap,snake);
+  GAME_SnakeFillInGameMap(gamemap,snake);
+  return 1;
+}
 
 
 void GAME_SnakeFreeNode(Snake_t *snake)
 {
+  Snake_t *p,*q;
+  p=snake->next;
 
+  while(p)
+  {
+    q=p->next;
+    free(p);
+    p=q;  
+  }
+  snake->next=NULL;
 }
 
-void GAME_SnakeInit(Snake_t *snake,unsigned char (*gamemap)[240])
+void GAME_SnakeInit(Snake_t *snake,unsigned char (*gamemap)[20])
 {
   Snake_t *p;
+  for(int i=0;i<40;i++)
+  {
+    for(int j=0;j<20;j++)
+    {
+      GameMap[i][j]=0;
+    }  
+  }
   GAME_NewSnake(snake);
   p=snake;
   
-  while(p!=NULL)
+  while(p->next!=NULL)
   {
-    GAME_SnakePixel(p->x,p->y);
+    GAME_SnakePixel(p->x,p->y,BLACK);
     p=p->next;
+  }  
+  for(int i=0;i<=27;i++)
+  {
+    for(int j=0;j<=19;j++)
+    {
+      if(i==0||i==27||j==0||j==19)
+      {       
+        GAME_SnakePixel(i,j,BLACK); 
+        gamemap[i][j]=1;   
+      //  Paint_DrawPoint(j, i, BLACK, DOT_PIXEL_2X2, DOT_STYLE_DFT);   
+      }
+    }
+  
   } 
+}
+
+void GAME_SnakeInitTest(Snake_t *snake,unsigned char (*gamemap)[20])
+{
+  Snake_t *p;
+  for(int i=0;i<40;i++)
+  {
+    for(int j=0;j<20;j++)
+    {
+      GameMap[i][j]=0;
+    }  
+  }
+  GAME_NewSnakeTest(snake);
+  p=snake;
+  
+  while(p->next!=NULL)
+  {
+    GAME_SnakePixel(p->x,p->y,BLACK);
+    p=p->next;
+  }  
+  for(int i=0;i<=27;i++)
+  {
+    for(int j=0;j<=19;j++)
+    {
+      if(i==0||i==27||j==0||j==19)
+      {       
+        GAME_SnakePixel(i,j,BLACK); 
+        gamemap[i][j]=1;   
+      //  Paint_DrawPoint(j, i, BLACK, DOT_PIXEL_2X2, DOT_STYLE_DFT);   
+      }
+    }
+  
+  } 
+}
+
+int GAME_Over(int n)
+{
+  static int num=0;
+  num++;
+  if(num==1)
+  {
+     Paint_ClearWindows(15, 80, 15 + Font12CN.Width*6, 100 + Font12CN.Height, WHITE);
+     Paint_DrawString_CN(15, 80,"投币再来" , &Font12CN,WHITE , BLACK);
+     Paint_DrawString_CN(80, 82,"▲" , &Font12CN,BLACK , WHITE);
+     Paint_DrawString_CN(15, 100,"下次一定" , &Font12CN,BLACK , WHITE);
+
+     return 15;
+  }
+  else if(num==2)
+  {
+
+    delay(1000);
+     Paint_ClearWindows(15, 80, 15 + Font12CN.Width*6, 100 + Font12CN.Height, WHITE);
+     Paint_DrawString_CN(15, 80,"投币再来" , &Font12CN,BLACK , WHITE);
+     Paint_DrawString_CN(80, 102,"▲" , &Font12CN,BLACK , WHITE);
+     Paint_DrawString_CN(15, 100,"下次一定" , &Font12CN,WHITE , BLACK);
+     return 15;
+  }
+  else if(num==3)
+  {
+     delay(1000);
+     Paint_ClearWindows(15, 80, 15 + Font12CN.Width*6, 100 + Font12CN.Height, WHITE);
+     Paint_DrawString_CN(20, 80,"投币成功！" , &Font12CN,BLACK , WHITE);
+
+     return 15; 
+  }
+  else if(num==4)
+  {
+     delay(1000);
+     return 4; 
+  }
 }
