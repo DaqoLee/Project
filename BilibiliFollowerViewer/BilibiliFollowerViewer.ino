@@ -37,6 +37,23 @@
 #error Bluetooth is not enabled! Please run `make menuconfig` to and enable it
 #endif
 
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+BLEServer *pServer = NULL;
+BLECharacteristic *pCharacteristic;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+uint8_t BLEbuf[32] = { 0 };
+uint32_t cnt = 0;
+
+#define SERVICE_UUID           "6E400001-B5A3-F393-E0A9-E50E24DCCA9E" // UART service UUID
+#define CHARACTERISTIC_UUID_RX "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
+#define CHARACTERISTIC_UUID_TX "6E400003-B5A3-F393-E0A9-E50E24DCCA9E"
+
+
 BluetoothSerial SerialBT;
 
 static const char ntpServerName[] = "time1.aliyun.com";//阿里云的时间服务器
@@ -96,7 +113,6 @@ String viewAndLikesUrl = "http://api.bilibili.com/x/space/upstat?mid=" + UID; //
 String weatherUrl = "http://api.seniverse.com/v3/weather/now.json?key=Sq4f2lh5b3lLPTCWr&location=guangzhou&language=zh-Hans&unit=c";   // 时间日期
 
 
-#define TEMP 7
 typedef struct SnakeNode
 {
   int x;
@@ -176,12 +192,79 @@ int temperature=0;
 uint8_t BtBuff[10]={0};
 Adafruit_NeoPixel strip(10, 16, NEO_GRB + NEO_KHZ800);
 
+
+
+class MyServerCallbacks : public BLEServerCallbacks {
+	void onConnect(BLEServer* pServer) {
+		deviceConnected = true;
+	};
+
+	void onDisconnect(BLEServer* pServer) {
+		deviceConnected = false;
+	}
+};
+
+class MyCallbacks : public BLECharacteristicCallbacks {
+	void onWrite(BLECharacteristic *pCharacteristic) {
+		std::string rxValue = pCharacteristic->getValue();
+
+		if (rxValue.length() > 0)
+		{
+			//        Serial.print("------>Received Value: ");
+
+			for (int i = 0; i < rxValue.length(); i++) {
+	//			Serial.print(rxValue[i]);
+				rxValue.copy((char*)BLEbuf, rxValue.length(),0);
+        Serial.printf("%s\r\n",BLEbuf);
+			}
+			//        Serial.println();
+
+			if (rxValue.find("A") != -1) {
+				//          Serial.print("Rx A!");
+			}
+			else if (rxValue.find("B") != -1) {
+				//          Serial.print("Rx B!");
+			}
+			//        Serial.println();
+		}
+	}
+};
+
+
+
 void setup()
 {
 
   Serial.begin(115200);
-  SerialBT.begin("ESP32"); //Bluetooth device name
+ // SerialBT.begin("ESP32"); //Bluetooth device name
   
+
+	// Create the BLE Device
+  BLEDevice::init("YingHuo");
+
+  // Create the BLE Server
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create the BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  // Create a BLE Characteristic
+  pCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_TX, BLECharacteristic::PROPERTY_NOTIFY);
+
+  pCharacteristic->addDescriptor(new BLE2902());
+
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(CHARACTERISTIC_UUID_RX, BLECharacteristic::PROPERTY_WRITE);
+
+  pCharacteristic->setCallbacks(new MyCallbacks());
+
+  // Start the service
+  pService->start();
+
+  // Start advertising
+  pServer->getAdvertising()->start();
+
+
 #if defined(__AVR_ATtiny85__) && (F_CPU == 16000000)
   clock_prescale_set(clock_div_1);
 #endif
@@ -255,26 +338,53 @@ void loop()
   Paint_DrawBitMap(gImage_2233); //gImage_66  
   EPD_2IN13_V2_Display(BlackImage);
 #endif
-  GlowTubeTest(weaTemp);
+//  GlowTubeTest(weaTemp);
   Paint_Clear(WHITE);
   EPD_2IN13_V2_Init(EPD_2IN13_V2_FULL);
   EPD_2IN13_V2_DisplayPartBaseImage(BlackImage);
   EPD_2IN13_V2_Init(EPD_2IN13_V2_PART);
 //  Paint_SelectImage(BlackImage);
-//  Paint_Clear(WHITE);
-//  GlowTubeTest(weaTemp);
+  Paint_Clear(WHITE);
+  delay(2000);
+ GlowTubeTest(0);
 //GAME_SnakeInitTest(&SnakeHand,GameMap);
   Clock.Flag=1;
   while (1)
   {
-    StatusLoop(BtBuff);
-//GAME_SnakeTest();
+    
+
+    StatusLoop((uint8_t*)BLEbuf);//BLEbuf BtBuff
     EPD_2IN13_V2_DisplayPart(BlackImage);
     if(GameDelayFlag)
     {
        delay(200);
     }
-   
+
+
+
+     if (deviceConnected)
+  {
+   // memset(BLEbuf, 0, 32);
+    //    memcpy(BLEbuf, (char*)"Hello BLE APP!", 32); 
+    pCharacteristic->setValue((char*)BLEbuf);
+
+    pCharacteristic->notify(); // Send the value to the app!
+  //    Serial.print("*** Sent Value: ");
+  //  Serial.print((char*)BLEbuf);
+    //    Serial.println(" ***");
+  }
+  // disconnecting
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500); // give the bluetooth stack the chance to get things ready
+    pServer->startAdvertising(); // restart advertising
+    Serial.println("start advertising");
+    oldDeviceConnected = deviceConnected;
+  }
+  // connecting
+  if (deviceConnected && !oldDeviceConnected) {
+    // do stuff here on connecting
+    oldDeviceConnected = deviceConnected;
+  }
  }
 //  EPD_2IN13_V2_Init(EPD_2IN13_V2_FULL);
 //  EPD_2IN13_V2_Clear();
@@ -307,10 +417,11 @@ void timerCallback()
       Clock.Flag=1;
       if(Clock.Hour>=24)
       {
-          Clock.Hour=0;
+        Clock.Hour=0;
       }
     }  
   }
+
 }
 
 void timer_msCallback()
@@ -339,7 +450,8 @@ void StatusLoop(uint8_t * ModeBuf)
 {
   long clockData=1000000+Clock.Hour*10000+Clock.Minute*100+Clock.Second;
   static uint8_t N=0,biliFlag=1,timeFlag=0,gameFlag=0,gameDir=4,gameTemp,testFlag=0;
-
+//Serial.printf("%s",ModeBuf);
+//Serial.println(ModeBuf);
   if(ModeBuf[0]==0x5A&&ModeBuf[2]==0x5A)
   {
     N=ModeBuf[1];
@@ -352,7 +464,13 @@ void StatusLoop(uint8_t * ModeBuf)
   {
     gameTemp=ModeBuf[1];
   } 
-  
+  Serial.printf("\r\n");
+  for(int i=0; i<5;i++)
+  {
+     Serial.print(ModeBuf[i]);
+    
+    }
+ 
   switch(N)
   {
     case BILI:
@@ -542,14 +660,42 @@ void StatusLoop(uint8_t * ModeBuf)
         delay(1000);
         Paint_DrawBitMap(gImage_66); //gImage_66  
 //        EPD_2IN13_V2_Display(BlackImage);
+
+
+      if(gameFlag)
+      {
+        biliFlag=1;
+        timeFlag=1;
+        gameFlag=0;
+        testFlag=1;
+        if(GameDelayFlag)
+        {
+          GAME_SnakeFreeNode(&SnakeHand);
+        }
+        GameDelayFlag=0;
+        Paint_Clear(WHITE);
+        getFollower(followerUrl);
+        Paint_DrawBitMap(gImage_66); //gImage_66 
+      }
+     if(flag)
+     {  
+        flag = false;
+        getFollower(followerUrl);       
+        if(Clock.Flag)
+        {
+          getClock();
+          Clock.Flag=0;
+        }      
+     }
+    GlowTubeDisplay(follower,ModeBuf);
        break;
      case 9: 
-          if(timeFlag)
+          if(testFlag)
           {
             biliFlag=1;
-            timeFlag=0;
+            timeFlag=1;
             gameFlag=1;
-            testFlag=1;
+            testFlag=0;
              if(GameDelayFlag)
             {
               GAME_SnakeFreeNode(&SnakeHand);
@@ -566,7 +712,7 @@ void StatusLoop(uint8_t * ModeBuf)
          if(flag)
          {  
             flag = false;
-            getFollower(followerUrl);
+            getFollower(MyFollowerUrl);
             getWeather(weatherUrl);
             FollowerDisplay();
             if(Clock.Flag)
@@ -582,6 +728,7 @@ void StatusLoop(uint8_t * ModeBuf)
          } 
     
          WeatherTest();
+          GlowTubeDisplay(clockData,ModeBuf);    
         // GlowTubeDisplay(clockData,ModeBuf);    
         break;    
     
@@ -730,71 +877,44 @@ void GlowTubeDisplay(int Data , uint8_t * ModeBuf)
 {
     char dataBuf[7];
     
-    static uint8_t red[7]  ={255,255,255,255,0  ,0  ,0  }; 
-    static uint8_t blue[7] ={0  ,0  ,255,0  ,255,255,0  };
-    static uint8_t green[7]={0  ,0  ,0  ,255,0  ,255,255};
-    static uint8_t color=0,tempFlag=0,j=0;
-    static uint8_t Brightness=4,Mode=1;
-    static float temp=1.0f;
-    if(ModeBuf[0]==0xFF&&ModeBuf[2]==0xFF)
-    {
-      Brightness=ModeBuf[1];
-    }
-    else if(ModeBuf[0]==0xAA&&ModeBuf[6]==0xAA)
-    {
-      Mode=ModeBuf[1];
-      if(Mode == 1||Mode == 2)
-      {
-        red[ModeBuf[2]]=ModeBuf[3];
-        blue[ModeBuf[2]]=ModeBuf[4];
-        green[ModeBuf[2]]=ModeBuf[5];        
-      }
+    static uint8_t red[8]  ={255,255,255,255,0  ,0  ,0   ,0}; 
+    static uint8_t blue[8] ={0  ,0  ,255,0  ,255,255,0   ,0};
+    static uint8_t green[8]={0  ,0  ,0  ,255,0  ,255,255 ,0};
 
-   //    Serial.printf("red[%d]=%d\n", ModeBuf[2],red[ModeBuf[2]]);
+    static uint8_t intensity = 4,mode = 1;
+    static float temp = 1.0f;
+
+    if(ModeBuf[0] == 0xFF && ModeBuf[2] == 0xFF)
+    {
+		intensity = ModeBuf[1];
+    }
+    else if(ModeBuf[0] == 0xAA && ModeBuf[6] == 0xAA)
+    {
+		mode = ModeBuf[1];
+	  if (mode == 1 || mode == 2)
+	  {
+		  red[ModeBuf[2]] = ModeBuf[3];
+		  blue[ModeBuf[2]] = ModeBuf[4];
+		  green[ModeBuf[2]] = ModeBuf[5];
+	  }
       
     }
+
     sprintf(dataBuf, "%07d",Data);
+    temp=intensity*0.1f;
+//    switch(intensity)
+//    {
+//      case 1: 
+//      temp = temp >= 20 ? 20 : temp + 0.2f;
+//      break;
+//      case 2: 
+//      temp = temp <= 1 ? 1 : temp - 0.2f;
+//      break;
+//      default:
+//      break;
+//    }
 
-    switch(Brightness)//5-255
-    {
-      case 1: 
-      temp=temp>=20?20:temp+0.2;
-      //delay(10);  
-     //  Serial.println(temp);
-      break;
-      case 2: 
-      temp=temp<=1?1:temp-0.2;
-     // delay(1);
-      //  Serial.println(temp);
-      break;
-      case 3: 
-      if(tempFlag==0)
-      {
-         temp=temp>=20?20:temp+0.2;
-
-         if(temp>=20)
-         {
-           tempFlag=1;
-         }
-      }
-      else
-      {
-         temp=temp<=1?1:temp-0.2;
-         if(temp<=1)
-         {
-           tempFlag=0;
-         }
-      }
-    // delay(10);   
-      break;
-      case 4: 
-      
-      break;
-      default:
-      break;
-    }
-
-    switch(Mode)
+    switch(mode)
     {
       case 1: //整体显示同一个颜色
       for(int i=1;i<=6;i++)
@@ -803,7 +923,7 @@ void GlowTubeDisplay(int Data , uint8_t * ModeBuf)
          delay(2);
       }
       break;
-      
+
       case 2: //不同管子不同颜色
       for(int i=1;i<=6;i++)
       {
@@ -825,35 +945,36 @@ void GlowTubeDisplay(int Data , uint8_t * ModeBuf)
       default:
       break;
     }
-
 }
 
-void rainbow(int Data ,int wait) 
+void rainbow(int data, int wait)
 {
-  static uint32_t color=0xFF0000;
-  char dataBuf[7];
-  static long firstPixelHue = 0;
-  sprintf(dataBuf, "%d",Data);  
-  if(firstPixelHue < 65536)
-//  for(long firstPixelHue = 0; firstPixelHue < 65536; firstPixelHue += 256) 
-  {
-   int pixelHue = firstPixelHue + ( 65536L );
-   color=strip.gamma32(strip.ColorHSV(pixelHue));
-   firstPixelHue += 256;
-    
-   for(int i=1;i<=6;i++)
-   { 
-      colWrite(i,  dataBuf[i]-'0',(color&0xFF0000)>>16 ,(color&0xFF00)>>8 ,color&0xFF);
-      delay(1);
-   }
-    delay(wait);  // Pause for a moment
-  }
-  else
-  {
-    firstPixelHue = 0;
-  }
-}
+	static uint32_t color = 0xFF0000;
+	char dataBuf[7];
+	static long firstPixelHue = 0;
+	
+	sprintf(dataBuf, "%07d", data);
+	if (firstPixelHue < 65536)
+	{
+		int pixelHue = firstPixelHue + (65536L);
+		color = strip.gamma32(strip.ColorHSV(pixelHue));
+		firstPixelHue += 256;
 
+		for (int i = 1; i <=6; i++)
+		{
+			colWrite(i, dataBuf[i] - '0', (color & 0xFF0000) >> 16, (color & 0xFF00) >> 8, color & 0xFF);
+			delay(1);
+
+		}
+		delay(wait);
+
+	}
+	else
+	{
+		firstPixelHue = 0;
+	}
+
+}
 
 
 void GlowTubeTest(int testNum)
@@ -1111,6 +1232,33 @@ void GlowTubeTest(int testNum)
 #endif 
 }
 
+/*
+void rainbow(int data, int wait)
+{
+	static uint32_t color = 0xFF0000;
+	char dataBuf[7];
+	static long firstPixelHue = 0;
+
+	sprintf(dataBuf, "%d", data);
+	if (firstPixelHue < 65536)
+	{
+		int pixelHue = firstPixelHue + (65536L);
+		color = strip.gamma32(strip.ColorHSV(pixelHue));
+		firstPixelHue += 256;
+
+		for (int i = 1; i <= 6; i++)
+		{
+			colWrite(i, dataBuf[i] - '0', (color & 0xFF0000) >> 16, (color & 0xFF00) >> 8, color & 0xFF);
+			delay(1);
+		}
+		delay(wait);
+	}
+	else
+	{
+		firstPixelHue = 0;
+	}
+}
+*/
 
 void FollowerDisplay(void)
 {
@@ -1167,7 +1315,7 @@ void WeatherDisplay(int weaCode, int temp)
 void WeatherTest(void)
 {
   static int arr[6]={1,4,9,10,21,30};
-  static int i=0,mo=8,da=1,we=6;
+  static int i=0,mo=8,da=14,we=5;
   char dateBuf[5];
 
   delay(500);
@@ -1418,6 +1566,7 @@ void colWrite(int Num,int Data,int R,int G,int B)
     break;
   }
 }
+
 
 
 
