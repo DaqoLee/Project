@@ -72,8 +72,8 @@
 	</view>
 
 	<view class = "col" >
-		<view class = "colCon" style="background:{{rgb}};display: flex; width:120px;height:80px; margin: -1420rpx 25rpx 0rpx;text-align: center;border-radius:20rpx;" bindtap="toPick"  >{{rgb}}</view>
-		<color-picker bindchangeColor="pickColor" initColor="{{rgb}}" show="{{pick}}" data-value='{{rgb}}' bind:touchend="sendColor" />
+		<view class = "colCon" style="background:{{rgbAll}};display: flex; width:120px;height:80px; margin: -1420rpx 25rpx 0rpx;text-align: center;border-radius:20rpx;" bindtap="toPick"  >{{rgbAll}}</view>
+		<color-picker bindchangeColor="pickColor" initColor="{{rgbAll}}" show="{{pick}}" data-value='{{rgbAll}}' bind:touchend="sendColor" />
 	</view>
 
 <view class="page__bd"  >
@@ -104,91 +104,50 @@
 
 <view wx:else>
 	<view class="Tue">
-		<image class="pic"  data-value='{{rgb}}' bindtap="sendColor" src="/images/YingHuoTube.gif" mode="widthFix"/>	
+		<image class="pic"  data-value='{{rgbAll}}' bindtap="sendColor" src="/images/YingHuoTube.gif" mode="widthFix"/>	
 	</view>
 </view>
 
 
-<view class="botU"  bindtap="send"> 
-	<navigator class="boxU"  data-value="{{1}}" bindtap="toPure" > 
-		<image class="pic1" data-value='AA0107FF0000AA' bindtap="sendTest" src="/images/PureColor.jpg" />
+<view class="colorSet"  bindtap="send"> 
+	<navigator class="box"  data-value="{{1}}" bindtap="toPure" > 
+		<image class="pic" data-value='AA0107FF0000AA' bindtap="sendTest" src="/images/PureColor.jpg" />
 	</navigator>	
-	<navigator class="boxU"  data-value="{{2}}" bindtap="toPure" > 
-		<image class="pic1" data-value='AA0207FF0000AA' bindtap="sendTest" src="/images/ChromaticStripe.jpg" />
+	<navigator class="box"  data-value="{{2}}" bindtap="toPure" > 
+		<image class="pic" data-value='AA0207FF0000AA' bindtap="sendTest" src="/images/ChromaticStripe.jpg" />
 	</navigator>	
-	<navigator class="boxU"  > 
-		<image class="pic1" data-value='AA0307FF0000AA' bindtap="sendTest" src="/images/ColorGradient.jpg"/>
+	<navigator class="box"  > 
+		<image class="pic" data-value='AA0307FF0000AA' bindtap="sendTest" src="/images/ColorGradient.jpg"/>
 	</navigator>	
-
 </view>
 
 
-
-<!-- <view class="botD"> 
-	<view class="botdCon">
-		<view class="box">
-			<button class="bot2" style="background:{{rgb}};" type="primary"  bindtap="send"  >1</button>
-		</view>
-		<view class="box">
-			<button class="bot2" style="background:{{rgb}};" type="primary"  bindtap="send"  >1</button>
-		</view>
-		<view class="box">
-			<button class="bot2" style="background:{{rgb}};" type="primary"  bindtap="send"  >1</button>
-		</view>
-		<view class="box">
-			<button class="bot2" style="background:{{rgb}};" type="primary"  bindtap="send"  >1</button>
-		</view>
-		<view class="box">
-			<button class="bot2" style="background:{{rgb}};" type="primary"  bindtap="send"  >1</button>
-		</view>	
-		<view class="box">
-			<button class="bot2" style="background:{{rgb}};" type="primary"  bindtap="send"  >1</button>
-		</view>
-	</view>
-</view> -->
-
-<!-- <view class="Ctrl">
-	<view class="Ctrlon"  >
-		<navigator class="box1" >
-			<image class="pic" data-value='5A005A' bindtap="sendTest" src="/images/U.png" mode="widthFix"/>
-		</navigator>
-		<navigator class="box2" url="">
-			<image class="pic" data-value='5A015A'  bindtap="sendTest" src="/images/D.png" mode="widthFix"/>
-		</navigator>
-		<navigator class="box3" url="">
-			<image class="pic" data-value='{{rgb}}' bindtap="sendColor" src="/images/L.png" mode="widthFix"/>	
-		</navigator>
-		<navigator class="box4" url="">
-			<image class="pic" data-value='{{rgb}}' bindtap="sendColor" src="/images/R.png" mode="widthFix"/>	
-		</navigator>
-	</view>
-</view> -->
 <view wx:if="{{isPure==1}}">
 	<view class="tube" >
 		<view class="tubeCon" bindtap="send">	
 			<navigator class="box"  bindtap="toPick" > 
 				<image class="pic" src="/images/tube.png" mode="widthFix"/>
-				<text class="txt"  data-num="{{0}}" bindtap="setNum" style="font-size: 50rpx; color :{{rgb}}">1</text>
+				<text class="txt"  data-num="{{0}}" bindtap="setNum" style="font-size: 50rpx; color :{{rgbAll}}">1</text>
 			</navigator>	
 			<navigator class="box"  bindtap="toPick"url=""> 
 				<image class="pic"  src="/images/tube.png" mode="widthFix"/>
-				<text class="txt"  data-num="{{0}}" bindtap="setNum" style="font-size: 50rpx; color :{{rgb}}">2</text>
+				<text class="txt"  data-num="{{0}}" bindtap="setNum" style="font-size: 50rpx; color :{{rgbAll}}">2</text>
 			</navigator>
 			<navigator class="box"   bindtap="toPick"  url=""> 
 				<image class="pic" src="/images/tube.png"  mode="widthFix"/>	
-				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgb}}">3</text>
+				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgbAll}}">3</text>
 			</navigator>
 			<navigator class="box" bindtap="toPick"> 
 				<image class="pic" src="/images/tube.png" mode="widthFix"/>
-				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgb}}">4</text>
+				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgbAll}}">4</text>
 			</navigator>
 			<navigator class="box" bindtap="toPick" url=""> 
 				<image class="pic"  src="/images/tube.png"  mode="widthFix"/>
-				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgb}}">5</text>
+				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgbAll}}">5</text>
 			</navigator>
 			<navigator class="box" bindtap="toPick" url=""> 
 				<image class="pic"  src="/images/tube.png" mode="widthFix"/>	
-				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgb}}">6</text>
+				<text class="txt" data-num="{{0}}" bindtap="setNum"   style="font-size: 50rpx; color :{{rgbAll}}">6</text>
 			</navigator>
 		</view>
 	</view>

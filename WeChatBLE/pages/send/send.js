@@ -13,7 +13,7 @@ Page({
     sendHex: false,
     sendMsg: 'YingHou',
     disabled:false,
-    rgb: 'rgb(255,0,0)',//初始值
+    rgbAll: 'rgb(255,0,0)',//初始值
     rgb1: 'rgb(255,0,0)',//初始值
     rgb2: 'rgb(255,0,255)',//初始值
     rgb3: 'rgb(255,255,0)',//初始值
@@ -23,13 +23,7 @@ Page({
     pick: false,
     isGame: false,
     isPure:1,
-    num:0,
-   time:'2018-09-03 15:46:13',
-
-   dataList:[
-     {mid:"1",following:"1",whisper:"1",black:"1",follower:"1"}
-   ]
-   // setLumin:'50'
+    num:0
   },
 
    // 显示取色器
@@ -52,13 +46,13 @@ Page({
    var val= e.detail.num;
 
    this.setData({
-    rgb: e.detail.color
+    rgbAll: e.detail.color
   })
    switch(this.data.num)
    {
       case 0:
         this.setData({
-          rgb: e.detail.color
+          rgbAll: e.detail.color
         })
       break;
       case 1:
@@ -115,27 +109,9 @@ Page({
   onLoad: function (options) {
     let d = JSON.parse(options.data)
     let properties = d.characteristicsUUID.properties
-    // console.log(properties.write)
-        // 调用函数时，传入new Date()参数，返回值是日期和时间
-   //     var time = util.formatTime(new Date());
-        // 再通过setData更改Page()里面的data，动态更新页面的数据
- wx.request({
-   url: 'http://api.k780.com/?app=weather.today&weaid=jiashan&appkey=48037&sign=979d5356e6e8ea0c19fcec8dd553997c&format=json',
-   success:res=>{
-    console.log(res.data);
-    this.setData({
-      dataList: res.data
-    })
-   }
- })
- 
-
-
-
     this.setData({
       data: d,
       disabled:!properties.write,
-   //   time: time
     })
     // console.log(this.data.data)
     let that = this
@@ -290,13 +266,8 @@ sendColor(res) {
     let arr= value.match(/\d+/g)
     let str1=this.PrefixZero(parseInt( this.data.num ).toString(16).toUpperCase(),2)
     let str2=this.PrefixZero(parseInt(this.data.isPure ).toString(16).toUpperCase(),2)
-    // alert(arr[0].toString(16));  
     this.setData({
-    //  sendMsg: "AA"+"01"+"00"+this.PrefixZero(parseInt( arr[0] ).toString(16).toUpperCase(),2)+this.PrefixZero(parseInt( arr[2] ).toString(16).toUpperCase(),2)+this.PrefixZero(parseInt( arr[1] ).toString(16).toUpperCase(),2)+"AA",
-    //  sendMsg: "AA"+this.PrefixZero(this.isPure.toString(16),2)+this.PrefixZero(this.num.toString(16),2)+this.PrefixZero(parseInt( arr[0] ).toString(16).toUpperCase(),2)+this.PrefixZero(parseInt( arr[2] ).toString(16).toUpperCase(),2)+this.PrefixZero(parseInt( arr[1] ).toString(16).toUpperCase(),2)+"AA",
-    //  sendMsg: "AA"+this.PrefixZero(this.isPure.toString(16),2)+this.PrefixZero(this.num.toString(16),2),
     sendMsg: "AA"+str2+str1+this.PrefixZero(parseInt( arr[0] ).toString(16).toUpperCase(),2)+this.PrefixZero(parseInt( arr[2] ).toString(16).toUpperCase(),2)+this.PrefixZero(parseInt( arr[1] ).toString(16).toUpperCase(),2)+"AA",
-     // sendLineBreak: true, // 换行
       sendHex: true // 16进制显示
     })
 
