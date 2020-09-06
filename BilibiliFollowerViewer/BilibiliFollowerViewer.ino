@@ -12,7 +12,6 @@
 
 #include <Ticker.h>
 #include <stdlib.h>
-
 #define BILI  0
 #define TIME  1
 #define GAME  2
@@ -97,7 +96,7 @@ void loop()
 //  Paint_SelectImage(BlackImage);
   Paint_Clear(WHITE);
   delay(2000);
- GlowTubeTest(0);
+// GlowTubeTest(0);
   Clock.Flag=1;
   
   while (1)
@@ -141,7 +140,7 @@ void loop()
 void timerCallback()
 {
   count++;
-  if (count == 5)
+  if (count == 60)//一分钟刷新一次
   {
     flag = true; 
     count = 0;
@@ -209,7 +208,16 @@ void StatusLoop(uint8_t * ModeBuf)
      if(flag)
      {  
         flag = false;
-        getFollower(MyFollowerUrl);       
+        if(!getFollower(MyFollowerUrl))
+        {
+          WiFi.reconnect();
+          while (WiFi.status() != WL_CONNECTED)
+          {
+            delay(500);
+            Serial.print("\r\nreconnect\r\n");
+          }         
+        }
+
         if(Clock.Flag)
         {
           getClock();
@@ -247,7 +255,15 @@ void StatusLoop(uint8_t * ModeBuf)
      if(flag)
      {  
         flag = false;
-        getFollower(MyFollowerUrl);
+        if(!getFollower(MyFollowerUrl))
+        {
+          WiFi.reconnect();
+          while (WiFi.status() != WL_CONNECTED)
+          {
+            delay(500);
+            Serial.print("\r\nreconnect\r\n");
+          }         
+        }
         FollowerDisplay();
         if(Clock.Flag)
         {
